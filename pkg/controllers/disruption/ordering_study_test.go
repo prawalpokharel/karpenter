@@ -150,8 +150,11 @@ func studyScenarios() map[string]studyScenario {
 	s3 := studyScenario{AppPools: 10, Services: 340, MemServices: 40, BatchSvcs: 50, CriticalFrac: 0.15, SSim: 840 * time.Millisecond, DriftAtMin: -1, WaveSize: 3}
 	s4 := s1
 	s4.CriticalFrac = 0.40
+	// S5 (PLAN_v2.md): the S3 workload with slow simulations, so the 3 minute walk fits only 60 and times out.
+	s5 := s3
+	s5.SSim = 3 * time.Second
 	smoke := studyScenario{AppPools: 1, Services: 14, MemServices: 2, BatchSvcs: 3, CriticalFrac: 0.3, SSim: 250 * time.Millisecond, DriftAtMin: 5, WaveSize: 3}
-	return map[string]studyScenario{"S1": s1, "S2": s2, "S3": s3, "S4": s4, "SMOKE": smoke}
+	return map[string]studyScenario{"S1": s1, "S2": s2, "S3": s3, "S4": s4, "S5": s5, "SMOKE": smoke}
 }
 
 type studyService struct {
