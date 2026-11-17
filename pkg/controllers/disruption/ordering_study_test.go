@@ -20,8 +20,11 @@ package disruption_test
 //
 // The study replays one seeded cluster and workload through several disruption candidate orderings. Candidate
 // construction, budgets, scheduling simulation, consolidation price filtering and today's four method objects are
-// Karpenter's own code, run against envtest. What the study models (virtual time per simulation, instant command
-// execution, drain times, pod readiness and PDB status) is listed in the study's PLAN.md.
+// Karpenter's own code, run against envtest. The rest is modelled: each scheduling simulation costs a fixed slice of
+// virtual time (so SingleNodeConsolidation's 3 minute timeout fires as it would on a slower cluster), commands execute
+// at once without the orchestration queue, candidates drain in 60 s (delete) or 150 s (replace) plus 60 s for each
+// extra PDB round, moved pods are unready for 45 s, and PDB status is kept up to date here because envtest runs no
+// kube-controller-manager.
 //
 // It only runs when ORDERING_STUDY_CONFIG points at a JSON config:
 //
@@ -150,7 +153,7 @@ func studyScenarios() map[string]studyScenario {
 	s3 := studyScenario{AppPools: 10, Services: 340, MemServices: 40, BatchSvcs: 50, CriticalFrac: 0.15, SSim: 840 * time.Millisecond, DriftAtMin: -1, WaveSize: 3}
 	s4 := s1
 	s4.CriticalFrac = 0.40
-	// S5 (PLAN_v2.md): the S3 workload with slow simulations, so the 3 minute walk fits only 60 and times out.
+	// S5: the S3 workload with slow simulations, so a 3 minute walk fits only 60 of them and the timeout binds.
 	s5 := s3
 	s5.SSim = 3 * time.Second
 	smoke := studyScenario{AppPools: 1, Services: 14, MemServices: 2, BatchSvcs: 3, CriticalFrac: 0.3, SSim: 250 * time.Millisecond, DriftAtMin: 5, WaveSize: 3}
@@ -1272,7 +1275,17 @@ func studyMinMax(xs []float64) func(float64) float64 {
 }
 
 // order scores and sorts unified-list candidates for the arm. Lower class first, then higher score, then higher
-// score2, then older node.
+// score2, then older node. Drifted candidates form the first class unless the arm is D-BONUS (age bonus, no class)
+// or D-DEADLINE (class only after 15 minutes of drift).
+//
+//	U-SR       Price / RescheduleDisruptionCost (SavingsRatio, today's single-node sort)
+//	U-SAVINGS  Price x (1 - utilization of the busiest allocatable resource)
+//	U-STRAW    the #3141 strawman: Price x (1 - utilization) - lambda x disruption, lambda in $/h per pod
+//	U-BLAST    SavingsRatio with +10 per critical pod and +5 per pod whose PDB allows at most one disruption
+//	U-TIER     SavingsRatio, with nodes hosting any critical pod after all others
+//	U-FEWPODS  fewest reschedulable pods first; U-RANDOM is a seeded shuffle
+//	C-*        Price / (1 + 10 x) for one normalized node signal x: critical pods (GOV), entropy of the owning
+//	           services (ENT), share of each service's replicas on the node (CONC), or their mean (CEI)
 func (r *studyRun) order(cands []*studyCand) []*studyCand {
 	arm := r.arm
 	driftClass := !strings.HasPrefix(arm, "D-BONUS")
